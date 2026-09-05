@@ -3,6 +3,8 @@ package hub
 import (
 	"log"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -19,11 +21,24 @@ var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
-		origin := r.Header.Get("Origin")
-		return origin == "" ||
-			origin == "http://localhost:3000" ||
-			origin == "http://127.0.0.1:3000"
+		return AllowsOrigin(r.Header.Get("Origin"))
 	},
+}
+
+func AllowsOrigin(origin string) bool {
+	if origin == "" {
+		return true
+	}
+	raw := os.Getenv("SOCKET_ALLOWED_ORIGINS")
+	if raw == "" {
+		raw = "http://localhost:10000,http://127.0.0.1:10000,http://localhost:3000,http://127.0.0.1:3000"
+	}
+	for allowed := range strings.SplitSeq(raw, ",") {
+		if strings.TrimSpace(allowed) == origin {
+			return true
+		}
+	}
+	return false
 }
 
 type Client struct {
@@ -31,10 +46,10 @@ type Client struct {
 	conn   *websocket.Conn
 	send   chan []byte
 	teamID int64
-	userID int64
+	userID string
 }
 
-func ServeWS(h *Hub, teamID, userID int64, w http.ResponseWriter, r *http.Request) {
+func ServeWS(h *Hub, teamID int64, userID string, w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("websocket upgrade failed: %v", err)

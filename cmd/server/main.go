@@ -11,7 +11,6 @@ import (
 
 	"github.com/CORTA-11/socket-server/internal/auth"
 	"github.com/CORTA-11/socket-server/internal/bus"
-	"github.com/CORTA-11/socket-server/internal/coreapi"
 	"github.com/CORTA-11/socket-server/internal/hub"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -37,7 +36,6 @@ func main() {
 	defer func() { _ = subscriber.Close() }()
 	go subscriber.Run(ctx)
 
-	core := coreapi.NewFromEnv()
 	internalKey := os.Getenv("INTERNAL_API_KEY")
 	if internalKey == "" {
 		internalKey = "dev-internal-key-change-me"
@@ -67,23 +65,12 @@ func main() {
 			return
 		}
 
-		if claims.OrgRole == "ORG_ADMIN" {
-			http.Error(w, "forbidden: organization admins cannot access team chat", http.StatusForbidden)
+		if teamPublicID != claims.TeamPublicID {
+			http.Error(w, "forbidden: wrong team", http.StatusForbidden)
 			return
 		}
 
-		access, err := core.CheckTeamAccess(req.Context(), teamPublicID, claims.UserID)
-		if err != nil {
-			http.Error(w, "forbidden: not a team member", http.StatusForbidden)
-			return
-		}
-
-		if access.OrgID != claims.OrgID {
-			http.Error(w, "forbidden: wrong organization", http.StatusForbidden)
-			return
-		}
-
-		hub.ServeWS(h, access.TeamID, claims.UserID, w, req)
+		hub.ServeWS(h, claims.TeamID, claims.UserID, w, req)
 	})
 
 	// Optional debug inject (local only). Production path is Redis Pub/Sub from core-api.
@@ -130,7 +117,7 @@ func main() {
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if origin == "http://localhost:3000" || origin == "http://127.0.0.1:3000" {
+		if hub.AllowsOrigin(origin) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
