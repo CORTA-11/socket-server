@@ -40,6 +40,7 @@ JWT_SECRET=development-socket-ticket-secret-change-me
 REDIS_URL=redis://localhost:6379/0
 REDIS_CHAT_CHANNEL=corta:chat:events
 PORT=8081
+SOCKET_ALLOWED_ORIGINS=http://localhost:10000,http://127.0.0.1:10000,http://localhost:3000,http://127.0.0.1:3000
 ```
 
 ## Run
@@ -78,6 +79,7 @@ on different `PORT`s; all receive the same Redis events.
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis connection |
 | `REDIS_CHAT_CHANNEL` | `corta:chat:events` | Pub/Sub channel (must match core-api) |
 | `PORT` | `8081` | Listen port |
+| `SOCKET_ALLOWED_ORIGINS` | local Envoy and frontend origins | Browser origins allowed to connect |
 
 ## Example: client WebSocket URL
 

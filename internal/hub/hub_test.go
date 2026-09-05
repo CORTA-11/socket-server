@@ -31,6 +31,18 @@ func TestHubPublishFansOutOnlyToMatchingTeam(t *testing.T) {
 	}
 }
 
+func TestAllowsOriginIncludesEnvoyDevelopmentEntrypoint(t *testing.T) {
+	t.Setenv("SOCKET_ALLOWED_ORIGINS", "")
+	for _, origin := range []string{"", "http://localhost:10000", "http://127.0.0.1:10000"} {
+		if !AllowsOrigin(origin) {
+			t.Fatalf("origin %q was rejected", origin)
+		}
+	}
+	if AllowsOrigin("http://example.test") {
+		t.Fatal("unexpectedly accepted unknown origin")
+	}
+}
+
 func receive(t *testing.T, ch <-chan []byte) []byte {
 	t.Helper()
 	select {
