@@ -3,3 +3,4 @@
 checks.txt
 .env
 /api
+.cache/

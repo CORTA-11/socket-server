@@ -31,10 +31,10 @@ type Client struct {
 	conn   *websocket.Conn
 	send   chan []byte
 	teamID int64
-	userID int64
+	userID string
 }
 
-func ServeWS(h *Hub, teamID, userID int64, w http.ResponseWriter, r *http.Request) {
+func ServeWS(h *Hub, teamID int64, userID string, w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("websocket upgrade failed: %v", err)
