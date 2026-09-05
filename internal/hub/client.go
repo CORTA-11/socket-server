@@ -1,7 +1,7 @@
 package hub
 
 import (
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -52,7 +52,7 @@ type Client struct {
 func ServeWS(h *Hub, teamID int64, userID string, w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("websocket upgrade failed: %v", err)
+		slog.Error("websocket upgrade failed", "error", err, "team_id", teamID, "user_id", userID)
 		return
 	}
 

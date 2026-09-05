@@ -3,7 +3,7 @@ package bus
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"os"
 	"time"
 
@@ -64,7 +64,7 @@ func (s *Subscriber) Run(ctx context.Context) {
 		_ = pubsub.Close()
 	}()
 
-	log.Printf("bus: subscribed to redis channel %q", s.channel)
+	slog.Info("redis subscription started", "channel", s.channel)
 
 	ch := pubsub.Channel()
 	for {
@@ -77,7 +77,7 @@ func (s *Subscriber) Run(ctx context.Context) {
 			}
 			var event ChatEvent
 			if err := json.Unmarshal([]byte(msg.Payload), &event); err != nil {
-				log.Printf("bus: invalid event payload: %v", err)
+				slog.Error("invalid redis event payload", "error", err, "channel", s.channel)
 				continue
 			}
 			if event.TeamID < 1 || event.Type == "" {

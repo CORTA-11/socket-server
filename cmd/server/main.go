@@ -1,19 +1,23 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
-	"log"
+	"errors"
+	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/CORTA-11/socket-server/internal/auth"
 	"github.com/CORTA-11/socket-server/internal/bus"
 	"github.com/CORTA-11/socket-server/internal/hub"
+	"github.com/CORTA-11/socket-server/internal/logging"
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
 )
 
 type publishRequest struct {
@@ -23,6 +27,8 @@ type publishRequest struct {
 }
 
 func main() {
+	logger := logging.New("socket-server")
+	slog.SetDefault(logger)
 	h := hub.New()
 	go h.Run()
 
@@ -31,7 +37,8 @@ func main() {
 
 	subscriber, err := bus.NewSubscriberFromEnv(h)
 	if err != nil {
-		log.Fatalf("redis subscriber failed (is Redis running?): %v", err)
+		logger.Error("redis subscriber failed", "error", err)
+		os.Exit(1)
 	}
 	defer func() { _ = subscriber.Close() }()
 	go subscriber.Run(ctx)
@@ -42,7 +49,7 @@ func main() {
 	}
 
 	r := chi.NewRouter()
-	r.Use(middleware.Logger)
+	r.Use(requestLog(logger))
 	r.Use(corsMiddleware)
 
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
@@ -108,10 +115,64 @@ func main() {
 		_ = server.Shutdown(context.Background())
 	}()
 
-	log.Printf("socket-server listening on %s (redis pub/sub fan-out)", addr)
+	logger.Info("socket-server listening", "addr", addr, "transport", "redis_pubsub")
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("socket-server failed: %v", err)
+		logger.Error("socket-server failed", "error", err)
+		os.Exit(1)
 	}
+}
+
+func requestLog(logger *slog.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			started := time.Now()
+			tracked := &responseWriter{ResponseWriter: w}
+			next.ServeHTTP(tracked, r)
+			status := tracked.status
+			if status == 0 {
+				status = http.StatusOK
+			}
+			logger.InfoContext(r.Context(), "http_request", "method", r.Method, "path", r.URL.Path, "status", status, "duration_ms", time.Since(started).Milliseconds(), "response_bytes", tracked.bytes)
+		})
+	}
+}
+
+type responseWriter struct {
+	http.ResponseWriter
+	status int
+	bytes  int
+}
+
+func (w *responseWriter) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *responseWriter) Write(body []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	n, err := w.ResponseWriter.Write(body)
+	w.bytes += n
+	return n, err
+}
+
+func (w *responseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+func (w *responseWriter) Flush() {
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (w *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, errors.New("response writer does not support hijacking")
+	}
+	return hijacker.Hijack()
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
