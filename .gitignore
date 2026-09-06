@@ -4,3 +4,5 @@ checks.txt
 .env
 /api
 .cache/
+collaboration/dist/
+collaboration/node_modules/
