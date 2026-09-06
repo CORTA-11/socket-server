@@ -1,18 +1,38 @@
 export interface CollaborationConfig {
   address: string;
+  allowedOrigins: string[];
   port: number;
   ticketSecret: string;
 }
+
+export const defaultAllowedOrigins = [
+  "http://localhost:10000",
+  "http://127.0.0.1:10000",
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+];
+export const defaultTicketSecret = "development-socket-ticket-secret-change-me";
 
 export function loadConfig(
   environment: NodeJS.ProcessEnv = process.env,
 ): CollaborationConfig {
   return {
     address: environment.COLLABORATION_HOST ?? "0.0.0.0",
+    allowedOrigins: readOrigins(environment.SOCKET_ALLOWED_ORIGINS),
     port: readPort(environment.COLLABORATION_PORT),
-    ticketSecret:
-      environment.JWT_SECRET ?? "development-socket-ticket-secret-change-me",
+    ticketSecret: environment.JWT_SECRET ?? defaultTicketSecret,
   };
+}
+
+function readOrigins(value: string | undefined): string[] {
+  if (value === undefined) {
+    return [...defaultAllowedOrigins];
+  }
+  const origins = value.split(",").map((origin) => origin.trim()).filter(Boolean);
+  if (origins.length === 0) {
+    throw new Error("SOCKET_ALLOWED_ORIGINS must contain at least one origin");
+  }
+  return origins;
 }
 
 function readPort(value: string | undefined): number {

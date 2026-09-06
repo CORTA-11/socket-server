@@ -1,7 +1,11 @@
 import { Server } from "@hocuspocus/server";
 
-import { validateDocumentTicket } from "./auth.js";
-import type { CollaborationConfig } from "./config.js";
+import { validateDocumentTicket, validateOrigin } from "./auth.js";
+import {
+  defaultAllowedOrigins,
+  defaultTicketSecret,
+  type CollaborationConfig,
+} from "./config.js";
 
 export function createCollaborationServer(
   config: Partial<CollaborationConfig> = {},
@@ -12,11 +16,19 @@ export function createCollaborationServer(
     port: config.port ?? 8082,
     quiet: true,
     stopOnSignals: false,
-    async onAuthenticate({ documentName, token }) {
+    async onAuthenticate({ documentName, requestHeaders, requestParameters, token }) {
+      validateOrigin(
+        requestHeaders.get("origin"),
+        config.allowedOrigins ?? defaultAllowedOrigins,
+      );
       return validateDocumentTicket(
         token,
-        documentName,
-        config.ticketSecret ?? "development-socket-ticket-secret-change-me",
+        {
+          documentId: documentName,
+          organizationId: requestParameters.get("org_id"),
+          teamId: requestParameters.get("team_id"),
+        },
+        config.ticketSecret ?? defaultTicketSecret,
       );
     },
     async onRequest({ request, response }) {

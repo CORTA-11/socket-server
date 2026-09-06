@@ -90,8 +90,11 @@ npm run smoke -- ws://localhost:10000/ws/docs
 Clients use the Document's public UUID as the Hocuspocus document name and a
 ticket from
 `POST /api/v1/orgs/{org_id}/teams/{team_id}/documents/{document_id}/socket-ticket`.
+The WebSocket URL carries the same public scope as
+`/ws/docs?org_id={org_id}&team_id={team_id}`.
 The collaboration process rejects tickets with an invalid signature, expired
-validity, malformed user/organization/team scope, or a different Document ID.
+validity, malformed or mismatched user/organization/team scope, a different
+Document ID, or an Origin outside `SOCKET_ALLOWED_ORIGINS`.
 
 Build verification is available from the repository root:
 

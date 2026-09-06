@@ -8,11 +8,17 @@ export interface DocumentTicketClaims {
   userId: string;
 }
 
+export interface RequestedDocumentRoom {
+  documentId: string;
+  organizationId: string | null;
+  teamId: string | null;
+}
+
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export function validateDocumentTicket(
   token: string,
-  documentName: string,
+  requestedRoom: RequestedDocumentRoom,
   secret: string,
   now: Date = new Date(),
 ): DocumentTicketClaims {
@@ -26,7 +32,7 @@ export function validateDocumentTicket(
   const encodedHeader = parts[0]!;
   const encodedPayload = parts[1]!;
   const encodedSignature = parts[2]!;
-  const signature = Buffer.from(encodedSignature, "base64url");
+  const signature = decodeCanonicalBase64URL(encodedSignature);
   const expected = createHmac("sha256", secret)
     .update(`${encodedHeader}.${encodedPayload}`)
     .digest();
@@ -40,15 +46,26 @@ export function validateDocumentTicket(
     throw new Error("Invalid Document ticket");
   }
   const claims = readClaims(payload);
-  if (claims.documentId !== documentName || claims.expiresAt <= Math.floor(now.getTime() / 1_000)) {
+  if (
+    claims.documentId !== requestedRoom.documentId ||
+    claims.organizationId !== requestedRoom.organizationId ||
+    claims.teamId !== requestedRoom.teamId ||
+    claims.expiresAt <= Math.floor(now.getTime() / 1_000)
+  ) {
     throw new Error("Invalid Document ticket");
   }
   return claims;
 }
 
+export function validateOrigin(origin: string | null, allowedOrigins: string[]): void {
+  if (origin === null || !allowedOrigins.includes(origin)) {
+    throw new Error("Invalid collaboration origin");
+  }
+}
+
 function parseRecord(encoded: string): Record<string, unknown> {
   try {
-    const value: unknown = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
+    const value: unknown = JSON.parse(decodeCanonicalBase64URL(encoded).toString("utf8"));
     if (value !== null && typeof value === "object" && !Array.isArray(value)) {
       return value as Record<string, unknown>;
     }
@@ -56,6 +73,17 @@ function parseRecord(encoded: string): Record<string, unknown> {
     // Authentication failures deliberately share one public error.
   }
   throw new Error("Invalid Document ticket");
+}
+
+function decodeCanonicalBase64URL(encoded: string): Buffer {
+  if (encoded === "" || !/^[A-Za-z0-9_-]+$/.test(encoded)) {
+    throw new Error("Invalid Document ticket");
+  }
+  const decoded = Buffer.from(encoded, "base64url");
+  if (decoded.toString("base64url") !== encoded) {
+    throw new Error("Invalid Document ticket");
+  }
+  return decoded;
 }
 
 function readClaims(payload: Record<string, unknown>): DocumentTicketClaims {
