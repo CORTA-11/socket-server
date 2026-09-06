@@ -14,6 +14,7 @@ export function createCollaborationServer(
     address: config.address ?? "127.0.0.1",
     name: "collaboration-server",
     port: config.port ?? 8082,
+    timeout: config.authenticationTimeout ?? 60_000,
     quiet: true,
     stopOnSignals: false,
     async onAuthenticate({ documentName, requestHeaders, requestParameters, token }) {

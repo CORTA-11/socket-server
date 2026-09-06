@@ -1,6 +1,7 @@
 export interface CollaborationConfig {
   address: string;
   allowedOrigins: string[];
+  authenticationTimeout: number;
   port: number;
   ticketSecret: string;
 }
@@ -19,6 +20,7 @@ export function loadConfig(
   return {
     address: environment.COLLABORATION_HOST ?? "0.0.0.0",
     allowedOrigins: readOrigins(environment.SOCKET_ALLOWED_ORIGINS),
+    authenticationTimeout: 60_000,
     port: readPort(environment.COLLABORATION_PORT),
     ticketSecret: environment.JWT_SECRET ?? defaultTicketSecret,
   };

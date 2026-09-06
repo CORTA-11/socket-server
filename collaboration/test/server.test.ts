@@ -29,9 +29,10 @@ test("collaboration health is observable independently", async (t) => {
   });
 });
 
-test("an unauthenticated Editing Session is rejected", async (t) => {
+test("missing and malformed Document tickets are rejected", async (t) => {
   const server = createCollaborationServer({
     allowedOrigins: [trustedOrigin],
+    authenticationTimeout: 100,
     port: 0,
     ticketSecret,
   });
@@ -46,6 +47,10 @@ test("an unauthenticated Editing Session is rejected", async (t) => {
   );
 
   assert.equal(reason, "permission-denied");
+  assert.equal(
+    await closeCodeWithoutTicket(t, server.address.port, documentId),
+    4408,
+  );
 });
 
 test("a valid Document ticket joins only its intended Document Room", async (t) => {
@@ -207,6 +212,33 @@ function nonCanonicalSignature(token: string): string {
   const equivalentIndex = canonicalIndex + 1;
   assert.equal(canonicalIndex % 4, 0);
   return `${token.slice(0, -1)}${alphabet[equivalentIndex]}`;
+}
+
+async function closeCodeWithoutTicket(
+  t: TestContext,
+  port: number,
+  name: string,
+): Promise<number> {
+  return new Promise<number>((resolve, reject) => {
+    const url = `ws://127.0.0.1:${port}/ws/docs?org_id=${organizationId}&team_id=${teamId}`;
+    const configuration = {
+      name,
+      token: null,
+      url,
+      WebSocketPolyfill: webSocketWithOrigin(trustedOrigin),
+      onClose: ({ event }: { event: { code: number } }) => {
+        clearTimeout(timeout);
+        provider.destroy();
+        resolve(event.code);
+      },
+    };
+    const provider = new HocuspocusProvider(configuration);
+    t.after(() => provider.destroy());
+    const timeout = setTimeout(() => {
+      provider.destroy();
+      reject(new Error("missing-ticket connection did not close"));
+    }, 2_000);
+  });
 }
 
 async function connectEditingSession(
