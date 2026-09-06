@@ -1,6 +1,6 @@
 # CORTA Socket Server
 
-Separate realtime service for team chat (and later collaborative docs).
+Separate realtime processes for team chat and collaborative Documents.
 
 ## Role
 
@@ -57,6 +57,43 @@ Run unit tests:
 make test
 ```
 
+## Document collaboration process
+
+The independently runnable Node 22+ Hocuspocus process owns live Document
+Rooms. It does not replace the Go chat process and does not receive tenant
+database credentials. Ticket validation and durable state adapters land in the
+next collaboration slices; until then every Editing Session is rejected.
+
+```bash
+cd collaboration
+npm ci
+npm test
+npm start
+```
+
+It listens on `COLLABORATION_HOST` (`0.0.0.0`) and
+`COLLABORATION_PORT` (`8082`). Its health is independent from chat:
+
+```bash
+curl http://localhost:8082/health
+# {"ok":true,"service":"collaboration-server"}
+```
+
+After the core-api and infra Compose projects are running, verify the public
+Envoy WebSocket route and its expected pre-ticket denial:
+
+```bash
+npm run smoke -- ws://localhost:10000/ws/docs
+```
+
+Build verification is available from the repository root:
+
+```bash
+make collaboration-build
+make collaboration-test
+make collaboration-container-check
+```
+
 Build and run with Docker:
 
 ```bash
@@ -80,6 +117,8 @@ on different `PORT`s; all receive the same Redis events.
 | `REDIS_CHAT_CHANNEL` | `corta:chat:events` | Pub/Sub channel (must match core-api) |
 | `PORT` | `8081` | Listen port |
 | `SOCKET_ALLOWED_ORIGINS` | local Envoy and frontend origins | Browser origins allowed to connect |
+| `COLLABORATION_HOST` | `0.0.0.0` | Hocuspocus listen address |
+| `COLLABORATION_PORT` | `8082` | Hocuspocus listen port |
 
 ## Example: client WebSocket URL
 
@@ -101,6 +140,7 @@ socket-server/
 ├── .env.example
 ├── Makefile
 ├── cmd/server/main.go
+├── collaboration/       # Node 22+ Hocuspocus Document process
 └── internal/
     ├── auth/jwt.go
     ├── bus/redis.go      # Redis subscriber → hub
