@@ -36,9 +36,13 @@ These instructions apply to the entire `socket-server` repository.
   authentication, origin checks, Redis delivery, or shutdown should include a
   regression test; end-to-end WebSocket coverage lives under `cmd/server`.
 - Run `gofmt -w` on changed Go files and use:
+  - `make check` — formatting, module consistency, vet, and build checks.
   - `make test` — all tests.
   - `make build` — build `bin/socket-server`.
-  - `go test -race ./...` — required for meaningful hub or concurrency changes.
+  - `make test-race` — required for meaningful hub or concurrency changes.
+- The repository also contains the Node-based `collaboration` service. Root Go
+  checks deliberately target `cmd` and `internal` so installed Node packages
+  are not traversed as Go package paths.
 - Run the narrow package test while iterating, then the full suite before handoff.
   Report any check that could not run because Redis or another service was absent.
 

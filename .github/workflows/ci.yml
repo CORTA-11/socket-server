@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: Go checks and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: make check
+      - run: make test-race
+
+  collaboration:
+    name: Collaboration checks and tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: collaboration
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: collaboration/package-lock.json
+      - run: npm ci
+      - run: npm test
+
+  containers:
+    name: Container builds and health check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: make image
+      - run: make collaboration-container-check
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/dependency-review-action@v4
