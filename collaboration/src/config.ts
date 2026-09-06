@@ -1,6 +1,7 @@
 export interface CollaborationConfig {
   address: string;
   port: number;
+  ticketSecret: string;
 }
 
 export function loadConfig(
@@ -9,6 +10,8 @@ export function loadConfig(
   return {
     address: environment.COLLABORATION_HOST ?? "0.0.0.0",
     port: readPort(environment.COLLABORATION_PORT),
+    ticketSecret:
+      environment.JWT_SECRET ?? "development-socket-ticket-secret-change-me",
   };
 }
 

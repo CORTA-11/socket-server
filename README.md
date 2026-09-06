@@ -61,8 +61,9 @@ make test
 
 The independently runnable Node 22+ Hocuspocus process owns live Document
 Rooms. It does not replace the Go chat process and does not receive tenant
-database credentials. Ticket validation and durable state adapters land in the
-next collaboration slices; until then every Editing Session is rejected.
+database credentials. It validates core-api's short-lived, Document-scoped
+tickets locally before an Editing Session joins a room. The durable state
+adapter lands in the next collaboration slice.
 
 ```bash
 cd collaboration
@@ -85,6 +86,12 @@ Envoy WebSocket route and its expected pre-ticket denial:
 ```bash
 npm run smoke -- ws://localhost:10000/ws/docs
 ```
+
+Clients use the Document's public UUID as the Hocuspocus document name and a
+ticket from
+`POST /api/v1/orgs/{org_id}/teams/{team_id}/documents/{document_id}/socket-ticket`.
+The collaboration process rejects tickets with an invalid signature, expired
+validity, malformed user/organization/team scope, or a different Document ID.
 
 Build verification is available from the repository root:
 
