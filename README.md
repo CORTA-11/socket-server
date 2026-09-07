@@ -129,12 +129,19 @@ on different `PORT`s; all receive the same Redis events.
 | `SOCKET_ALLOWED_ORIGINS` | local Envoy and frontend origins | Browser origins allowed to connect |
 | `COLLABORATION_HOST` | `0.0.0.0` | Hocuspocus listen address |
 | `COLLABORATION_PORT` | `8082` | Hocuspocus listen port |
+| `CORE_API_INTERNAL_URL` | `http://127.0.0.1:8080` | Base URL used to load and store canonical Document state |
+| `COLLABORATION_SERVICE_SECRET` | (dev default) | Shared private credential; must match core-api and be replaced outside development |
 
 ## Example: client WebSocket URL
 
 ```text
 ws://localhost:8081/ws?token=<socket_ticket>&team_id=<team_public_uuid>
 ```
+
+For the Document collaboration endpoint, use the scoped Hocuspocus document
+name `<org_id>:<team_id>:<document_id>` and send the same organization and team
+IDs as `org_id` and `team_id` query parameters. The signed Document ticket must
+match all three IDs.
 
 ## Example: health check
 

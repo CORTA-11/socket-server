@@ -2,6 +2,8 @@ export interface CollaborationConfig {
   address: string;
   allowedOrigins: string[];
   authenticationTimeout: number;
+  collaborationServiceSecret: string;
+  coreAPIURL: string;
   port: number;
   ticketSecret: string;
 }
@@ -13,6 +15,7 @@ export const defaultAllowedOrigins = [
   "http://127.0.0.1:3000",
 ];
 export const defaultTicketSecret = "development-socket-ticket-secret-change-me";
+export const defaultCollaborationServiceSecret = "development-collaboration-service-secret-change-me";
 
 export function loadConfig(
   environment: NodeJS.ProcessEnv = process.env,
@@ -21,6 +24,8 @@ export function loadConfig(
     address: environment.COLLABORATION_HOST ?? "0.0.0.0",
     allowedOrigins: readOrigins(environment.SOCKET_ALLOWED_ORIGINS),
     authenticationTimeout: 60_000,
+    collaborationServiceSecret: environment.COLLABORATION_SERVICE_SECRET ?? defaultCollaborationServiceSecret,
+    coreAPIURL: environment.CORE_API_INTERNAL_URL ?? "http://127.0.0.1:8080",
     port: readPort(environment.COLLABORATION_PORT),
     ticketSecret: environment.JWT_SECRET ?? defaultTicketSecret,
   };

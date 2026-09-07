@@ -14,6 +14,8 @@ export REDIS_CHAT_CHANNEL
 export PORT
 export COLLABORATION_HOST
 export COLLABORATION_PORT
+export CORE_API_INTERNAL_URL
+export COLLABORATION_SERVICE_SECRET
 
 .PHONY: check fmt-check mod-check vet run build test test-race image \
 	collaboration-run collaboration-build collaboration-test collaboration-container-check

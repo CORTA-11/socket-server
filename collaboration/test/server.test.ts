@@ -7,13 +7,14 @@ import { test, type TestContext } from "node:test";
 import { HocuspocusProvider } from "@hocuspocus/provider";
 import WebSocket from "ws";
 
-import { createCollaborationServer } from "../src/server.js";
+import { createCollaborationServer, documentRoomName } from "../src/server.js";
 
 const ticketSecret = "test-document-ticket-secret-value-123";
 const organizationId = "11111111-1111-4111-8111-111111111111";
 const teamId = "22222222-2222-4222-8222-222222222222";
 const documentId = "33333333-3333-4333-8333-333333333333";
 const trustedOrigin = "https://app.example";
+const roomName = documentRoomName({ documentId, organizationId, teamId });
 
 test("collaboration health is observable independently", async (t) => {
   const server = createCollaborationServer({ port: 0 });
@@ -42,13 +43,13 @@ test("missing and malformed Document tickets are rejected", async (t) => {
   const reason = await rejectEditingSession(
     t,
     server.address.port,
-    documentId,
+    roomName,
     "not-a-document-ticket",
   );
 
   assert.equal(reason, "permission-denied");
   assert.equal(
-    await closeCodeWithoutTicket(t, server.address.port, documentId),
+    await closeCodeWithoutTicket(t, server.address.port, roomName),
     4408,
   );
 });
@@ -63,11 +64,15 @@ test("a valid Document ticket joins only its intended Document Room", async (t) 
   t.after(() => server.destroy());
   const token = validDocumentTicket();
 
-  await connectEditingSession(t, server.address.port, documentId, token);
+  await connectEditingSession(t, server.address.port, roomName, token);
   const rejection = await rejectEditingSession(
     t,
     server.address.port,
-    "44444444-4444-4444-8444-444444444444",
+    documentRoomName({
+      documentId: "44444444-4444-4444-8444-444444444444",
+      organizationId,
+      teamId,
+    }),
     token,
   );
 
@@ -89,11 +94,11 @@ test("altered and expired Document tickets are rejected", async (t) => {
   const altered = nonCanonicalSignature(validDocumentTicket());
 
   assert.equal(
-    await rejectEditingSession(t, server.address.port, documentId, expired),
+    await rejectEditingSession(t, server.address.port, roomName, expired),
     "permission-denied",
   );
   assert.equal(
-    await rejectEditingSession(t, server.address.port, documentId, altered),
+    await rejectEditingSession(t, server.address.port, roomName, altered),
     "permission-denied",
   );
 });
@@ -118,12 +123,12 @@ test("cross-organization, cross-team, malformed-user, and untrusted-origin sessi
     { origin: "https://attacker.example" },
   ]) {
     assert.equal(
-      await rejectEditingSession(t, server.address.port, documentId, token, options),
+      await rejectEditingSession(t, server.address.port, roomName, token, options),
       "permission-denied",
     );
   }
   assert.equal(
-    await rejectEditingSession(t, server.address.port, documentId, malformedUser),
+    await rejectEditingSession(t, server.address.port, roomName, malformedUser),
     "permission-denied",
   );
 });
