@@ -9,7 +9,8 @@ import {
   type CollaborationConfig,
 } from "./config.js";
 import { materializeDocument } from "./projections.js";
-import { CoreAPIStorage, type DocumentScope } from "./storage.js";
+import { initializeDocument } from "./initial-state.js";
+import { CoreAPIStorage, type DocumentScope, type StoredDocumentState } from "./storage.js";
 
 export function createCollaborationServer(
   config: Partial<CollaborationConfig> = {},
@@ -64,7 +65,7 @@ export function createCollaborationServer(
 }
 
 interface DocumentStateStorage {
-  load(scope: DocumentScope): Promise<Uint8Array>;
+  load(scope: DocumentScope): Promise<StoredDocumentState>;
   store(
     scope: DocumentScope,
     state: Uint8Array,
@@ -75,12 +76,14 @@ interface DocumentStateStorage {
 export async function loadDocumentState(
   storage: DocumentStateStorage | undefined,
   claims: DocumentTicketClaims,
-): Promise<Uint8Array | undefined> {
+): Promise<Doc | Uint8Array | undefined> {
   if (storage === undefined) {
     return;
   }
   const state = await storage.load(documentScope(claims));
-  return state.byteLength === 0 ? undefined : state;
+  return state.canonicalState.byteLength === 0
+    ? initializeDocument(state.title, state.bodyHTML)
+    : state.canonicalState;
 }
 
 export async function storeDocumentState(
