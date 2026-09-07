@@ -61,8 +61,9 @@ make test
 
 The independently runnable Node 22+ Hocuspocus process owns live Document
 Rooms. It does not replace the Go chat process and does not receive tenant
-database credentials. Ticket validation and durable state adapters land in the
-next collaboration slices; until then every Editing Session is rejected.
+database credentials. It validates core-api's short-lived, Document-scoped
+tickets locally before an Editing Session joins a room. The durable state
+adapter lands in the next collaboration slice.
 
 ```bash
 cd collaboration
@@ -85,6 +86,15 @@ Envoy WebSocket route and its expected pre-ticket denial:
 ```bash
 npm run smoke -- ws://localhost:10000/ws/docs
 ```
+
+Clients use the Document's public UUID as the Hocuspocus document name and a
+ticket from
+`POST /api/v1/orgs/{org_id}/teams/{team_id}/documents/{document_id}/socket-ticket`.
+The WebSocket URL carries the same public scope as
+`/ws/docs?org_id={org_id}&team_id={team_id}`.
+The collaboration process rejects tickets with an invalid signature, expired
+validity, malformed or mismatched user/organization/team scope, a different
+Document ID, or an Origin outside `SOCKET_ALLOWED_ORIGINS`.
 
 Build verification is available from the repository root:
 
@@ -119,12 +129,19 @@ on different `PORT`s; all receive the same Redis events.
 | `SOCKET_ALLOWED_ORIGINS` | local Envoy and frontend origins | Browser origins allowed to connect |
 | `COLLABORATION_HOST` | `0.0.0.0` | Hocuspocus listen address |
 | `COLLABORATION_PORT` | `8082` | Hocuspocus listen port |
+| `CORE_API_INTERNAL_URL` | `http://127.0.0.1:8080` | Base URL used to load and store canonical Document state |
+| `COLLABORATION_SERVICE_SECRET` | (dev default) | Shared private credential; must match core-api and be replaced outside development |
 
 ## Example: client WebSocket URL
 
 ```text
 ws://localhost:8081/ws?token=<socket_ticket>&team_id=<team_public_uuid>
 ```
+
+For the Document collaboration endpoint, use the scoped Hocuspocus document
+name `<org_id>:<team_id>:<document_id>` and send the same organization and team
+IDs as `org_id` and `team_id` query parameters. The signed Document ticket must
+match all three IDs.
 
 ## Example: health check
 
