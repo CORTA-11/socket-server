@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 
 export interface DocumentTicketClaims {
   documentId: string;
+  displayName: string;
   expiresAt: number;
   organizationId: string;
   teamId: string;
@@ -87,9 +88,12 @@ function decodeCanonicalBase64URL(encoded: string): Buffer {
 }
 
 function readClaims(payload: Record<string, unknown>): DocumentTicketClaims {
-  const { document_id, exp, org_id, purpose, team_id, user_id } = payload;
+  const { display_name, document_id, exp, org_id, purpose, team_id, user_id } = payload;
   if (
     purpose !== "document" ||
+    typeof display_name !== "string" ||
+    display_name.length === 0 ||
+    display_name.length > 200 ||
     !validUUID(document_id) ||
     !validUUID(org_id) ||
     !validUUID(team_id) ||
@@ -100,6 +104,7 @@ function readClaims(payload: Record<string, unknown>): DocumentTicketClaims {
   }
   return {
     documentId: document_id,
+    displayName: display_name,
     expiresAt: exp as number,
     organizationId: org_id,
     teamId: team_id,

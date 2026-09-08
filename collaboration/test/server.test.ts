@@ -81,6 +81,52 @@ test("a valid Document ticket joins only its intended Document Room", async (t) 
   assert.equal(rejection, "permission-denied");
 });
 
+test("Presence uses authenticated identity and distinct Editing Sessions", async (t) => {
+  const server = createCollaborationServer({
+    allowedOrigins: [trustedOrigin],
+    port: 0,
+    ticketSecret,
+  });
+  await server.listen();
+  t.after(() => server.destroy());
+  const editorId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const observerId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const editorTicket = signDocumentTicket({
+    ...validClaims(),
+    display_name: "Ayesha Fernando",
+    user_id: editorId,
+  });
+  const observerTicket = signDocumentTicket({
+    ...validClaims(),
+    display_name: "Malik Perera",
+    user_id: observerId,
+  });
+  const firstSession = editingSession(t, server.address.port, roomName, editorTicket, {});
+  const secondSession = editingSession(t, server.address.port, roomName, editorTicket, {});
+  const observer = editingSession(t, server.address.port, roomName, observerTicket, {});
+  await waitFor(() => server.hocuspocus.getConnectionsCount() === 3);
+
+  for (const provider of [firstSession, secondSession]) {
+    provider.setAwarenessField("user", {
+      color: "#ffffff",
+      email: "leaked@example.com",
+      id: "forged-id",
+      name: "Forged Name",
+      sessionId: "forged-session",
+    });
+  }
+
+  await waitFor(() => presenceFor(observer, editorId).length === 2);
+  const sessions = presenceFor(observer, editorId);
+  assert.deepEqual(new Set(sessions.map((presence) => presence.name)), new Set(["Ayesha Fernando"]));
+  assert.equal(new Set(sessions.map((presence) => presence.color)).size, 1);
+  assert.equal(new Set(sessions.map((presence) => presence.sessionId)).size, 2);
+  assert.ok(sessions.every((presence) => presence.email === undefined));
+
+  firstSession.destroy();
+  await waitFor(() => presenceFor(observer, editorId).length === 1);
+});
+
 test("deleting a Document closes its room on every replica and rejects new Editing Sessions", async (t) => {
   const roomLifecycle = new InMemoryRoomLifecycle();
   const receivingServer = createCollaborationServer({
@@ -246,6 +292,7 @@ async function availablePort(): Promise<number> {
 
 interface DocumentTicketClaims {
 	document_id: string;
+	display_name: string;
 	exp: number;
 	org_id: string;
 	purpose: "document";
@@ -262,12 +309,27 @@ interface ConnectionOptions {
 function validClaims(): DocumentTicketClaims {
   return {
     document_id: documentId,
+    display_name: "Authenticated Editor",
     exp: Math.floor(Date.now() / 1_000) + 60,
     org_id: organizationId,
     purpose: "document",
     team_id: teamId,
     user_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
   };
+}
+
+type Presence = {
+  color?: unknown;
+  email?: unknown;
+  id?: unknown;
+  name?: unknown;
+  sessionId?: unknown;
+};
+
+function presenceFor(provider: HocuspocusProvider, userId: string): Presence[] {
+  return Array.from(provider.awareness?.getStates().values() ?? [])
+    .map((state) => state.user as Presence | undefined)
+    .filter((presence): presence is Presence => presence?.id === userId);
 }
 
 function validDocumentTicket(): string {

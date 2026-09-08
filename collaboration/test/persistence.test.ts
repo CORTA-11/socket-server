@@ -178,6 +178,7 @@ function signedTicket(scope: RoomScope = defaultScope): string {
   const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
   const payload = Buffer.from(JSON.stringify({
     document_id: scope.documentId,
+    display_name: "Authenticated Editor",
     exp: Math.floor(Date.now() / 1_000) + 60,
     org_id: scope.organizationId,
     purpose: "document",
@@ -191,6 +192,7 @@ function signedTicket(scope: RoomScope = defaultScope): string {
 function ticketClaims(scope: RoomScope) {
   return {
     documentId: scope.documentId,
+    displayName: "Authenticated Editor",
     expiresAt: Math.floor(Date.now() / 1_000) + 60,
     organizationId: scope.organizationId,
     teamId: scope.teamId,
