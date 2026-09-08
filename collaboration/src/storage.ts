@@ -18,7 +18,15 @@ export interface CoreAPIStorageConfig {
 }
 
 interface DocumentStateResponse {
+  body_html: string;
   canonical_state: string;
+  title: string;
+}
+
+export interface StoredDocumentState {
+  bodyHTML: string;
+  canonicalState: Uint8Array;
+  title: string;
 }
 
 export class CoreAPIStorage {
@@ -39,15 +47,19 @@ export class CoreAPIStorage {
     this.serviceSecret = config.serviceSecret;
   }
 
-  async load(scope: DocumentScope): Promise<Uint8Array> {
+  async load(scope: DocumentScope): Promise<StoredDocumentState> {
     const response = await this.request(scope, "GET");
     const payload: unknown = await response.json();
     if (!isDocumentStateResponse(payload)) {
       throw new Error("core-api returned an invalid Document state response");
     }
-    const state = decodeCanonicalBase64(payload.canonical_state);
-    validateYjsState(state);
-    return state;
+    const canonicalState = decodeCanonicalBase64(payload.canonical_state);
+    validateYjsState(canonicalState);
+    return {
+      bodyHTML: payload.body_html,
+      canonicalState,
+      title: payload.title,
+    };
   }
 
   async store(
@@ -105,7 +117,9 @@ function validateYjsState(state: Uint8Array): void {
 
 function isDocumentStateResponse(value: unknown): value is DocumentStateResponse {
   return value !== null && typeof value === "object" &&
-    typeof (value as Record<string, unknown>).canonical_state === "string";
+    typeof (value as Record<string, unknown>).body_html === "string" &&
+    typeof (value as Record<string, unknown>).canonical_state === "string" &&
+    typeof (value as Record<string, unknown>).title === "string";
 }
 
 function decodeCanonicalBase64(value: string): Uint8Array {

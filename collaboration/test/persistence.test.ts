@@ -26,6 +26,23 @@ const editorId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const trustedOrigin = "https://app.example";
 const defaultScope = { documentId, organizationId, teamId };
 
+test("a Document without canonical state initializes its named fields from persisted projections", async (t) => {
+  const coreAPIURL = await mockCoreAPI(t, async (_request, response) => {
+    json(response, 200, stateResponse(""));
+  });
+  const server = createCollaborationServer({
+    allowedOrigins: [trustedOrigin], collaborationServiceSecret: serviceSecret,
+    coreAPIURL, port: 0, ticketSecret,
+  });
+  await server.listen();
+  t.after(() => server.destroy());
+
+  const provider = await connectedProvider(t, server.address.port);
+
+  assert.match(JSON.stringify(TiptapTransformer.fromYdoc(provider.document, "title")), /Research notes/);
+  assert.match(JSON.stringify(TiptapTransformer.fromYdoc(provider.document, "body")), /Persisted/);
+});
+
 test("a fresh collaboration process reloads the canonical state stored through core-api", async (t) => {
   let canonicalState = "";
   let storedBody: Record<string, unknown> | undefined;
@@ -33,7 +50,7 @@ test("a fresh collaboration process reloads the canonical state stored through c
     assert.equal(request.headers.authorization, `Bearer ${serviceSecret}`);
     assert.equal(request.headers["x-synodus-editor-id"], editorId);
     if (request.method === "GET") {
-      json(response, 200, stateResponse(canonicalState));
+      json(response, 200, stateResponse(canonicalState, "", ""));
       return;
     }
     storedBody = await readJSON(request) as Record<string, unknown>;
@@ -107,7 +124,7 @@ test("Hocuspocus persistence callbacks surface load and store failures", async (
   const loadFailure = new Error("load failed");
   const storeFailure = new Error("store failed");
   const storage = {
-    load: async (_scope: DocumentScope): Promise<Uint8Array> => Promise.reject(loadFailure),
+    load: async (_scope: DocumentScope) => Promise.reject(loadFailure),
     store: async (): Promise<void> => Promise.reject(storeFailure),
   };
 
@@ -230,11 +247,15 @@ async function waitFor(condition: () => boolean): Promise<void> {
   }
 }
 
-function stateResponse(state: string) {
+function stateResponse(
+  state: string,
+  title = "Research notes",
+  bodyHTML = "<p>Persisted</p>",
+) {
   return {
     canonical_state: state,
-    title: "Research notes",
-    body_html: "<p>Persisted</p>",
+    title,
+    body_html: bodyHTML,
     updated_by: editorId,
     updated_at: "2026-09-07T09:30:00Z",
   };

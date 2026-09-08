@@ -27,7 +27,11 @@ test("core-api storage loads canonical Yjs bytes with service and Editor identit
 
   const state = await storage.load(scope);
 
-  assert.deepEqual(state, Uint8Array.from([0, 0]));
+  assert.deepEqual(state, {
+    bodyHTML: "<p>Persisted</p>",
+    canonicalState: Uint8Array.from([0, 0]),
+    title: "Shared notes",
+  });
   assert.equal(requests[0]?.method, "GET");
   assert.equal(requests[0]?.url, documentStatePath());
   assert.equal(requests[0]?.authorization, `Bearer ${serviceSecret}`);
@@ -68,7 +72,7 @@ test("core-api storage rejects failed loads without exposing response content", 
 
 test("core-api storage rejects semantically invalid Yjs state", async (t) => {
   const baseURL = await mockCoreAPI(t, [], (_request, response) => {
-    json(response, 200, { canonical_state: "AQID" });
+    json(response, 200, { body_html: "", canonical_state: "AQID", title: "Notes" });
   });
   const storage = new CoreAPIStorage({ baseURL, serviceSecret });
 
