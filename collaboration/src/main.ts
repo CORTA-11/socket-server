@@ -1,8 +1,11 @@
 import { loadConfig } from "./config.js";
+import { InMemoryRoomLifecycle } from "./room-lifecycle.js";
 import { createCollaborationServer } from "./server.js";
 
 const config = loadConfig();
-const server = createCollaborationServer(config);
+const server = createCollaborationServer(process.env.NODE_ENV === "test"
+  ? { ...config, roomLifecycle: new InMemoryRoomLifecycle() }
+  : config);
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, () => {

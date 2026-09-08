@@ -209,7 +209,7 @@ test("the collaboration process shuts down cleanly on SIGTERM", async (t) => {
   const port = await availablePort();
   const child = spawn(process.execPath, ["dist/src/main.js"], {
     cwd: process.cwd(),
-    env: { ...process.env, COLLABORATION_PORT: String(port) },
+    env: { ...process.env, COLLABORATION_PORT: String(port), NODE_ENV: "test" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   t.after(() => child.kill("SIGKILL"));
