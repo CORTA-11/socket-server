@@ -5,6 +5,7 @@ export interface CollaborationConfig {
   collaborationServiceSecret: string;
   coreAPIURL: string;
   port: number;
+  redisURL: string;
   ticketSecret: string;
 }
 
@@ -27,6 +28,7 @@ export function loadConfig(
     collaborationServiceSecret: environment.COLLABORATION_SERVICE_SECRET ?? defaultCollaborationServiceSecret,
     coreAPIURL: environment.CORE_API_INTERNAL_URL ?? "http://127.0.0.1:8080",
     port: readPort(environment.COLLABORATION_PORT),
+    redisURL: environment.REDIS_URL ?? "redis://127.0.0.1:6379/0",
     ticketSecret: environment.JWT_SECRET ?? defaultTicketSecret,
   };
 }
