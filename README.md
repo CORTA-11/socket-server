@@ -123,7 +123,7 @@ on different `PORT`s; all receive the same Redis events.
 |----------|---------|---------|
 | `INTERNAL_API_KEY` | `dev-internal-key-change-me` | Optional local debug publish guard |
 | `JWT_SECRET` | (dev default) | Must match core-api socket-ticket secret |
-| `REDIS_URL` | `redis://localhost:6379/0` | Redis connection |
+| `REDIS_URL` | `redis://localhost:6379/0` | Redis connection for chat and cross-replica Document Room lifecycle events |
 | `REDIS_CHAT_CHANNEL` | `corta:chat:events` | Pub/Sub channel (must match core-api) |
 | `PORT` | `8081` | Listen port |
 | `SOCKET_ALLOWED_ORIGINS` | local Envoy and frontend origins | Browser origins allowed to connect |

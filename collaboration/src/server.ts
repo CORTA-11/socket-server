@@ -1,4 +1,5 @@
 import { Server } from "@hocuspocus/server";
+import { timingSafeEqual } from "node:crypto";
 import { type Doc, encodeStateAsUpdate } from "yjs";
 
 import { type DocumentTicketClaims, validateDocumentTicket, validateOrigin } from "./auth.js";
@@ -10,25 +11,42 @@ import {
 } from "./config.js";
 import { materializeDocument } from "./projections.js";
 import { initializeDocument } from "./initial-state.js";
+import {
+  InMemoryRoomLifecycle,
+  RedisRoomLifecycle,
+  type RoomLifecycle,
+} from "./room-lifecycle.js";
 import { CoreAPIStorage, type DocumentScope, type StoredDocumentState } from "./storage.js";
 
 export function createCollaborationServer(
-  config: Partial<CollaborationConfig> = {},
+  config: Partial<CollaborationConfig> & { roomLifecycle?: RoomLifecycle } = {},
 ): Server<DocumentTicketClaims> {
+  const roomLifecycle = config.roomLifecycle ?? (config.redisURL === undefined
+    ? new InMemoryRoomLifecycle()
+    : new RedisRoomLifecycle(config.redisURL));
   const storage = config.coreAPIURL === undefined && config.collaborationServiceSecret === undefined
     ? undefined
     : new CoreAPIStorage({
         baseURL: config.coreAPIURL ?? "http://127.0.0.1:8080",
         serviceSecret: config.collaborationServiceSecret ?? defaultCollaborationServiceSecret,
       });
-  return new Server<DocumentTicketClaims>({
+  const server = new Server<DocumentTicketClaims>({
     address: config.address ?? "127.0.0.1",
     name: "collaboration-server",
     port: config.port ?? 8082,
     timeout: config.authenticationTimeout ?? 60_000,
     quiet: true,
     stopOnSignals: false,
+    async onListen() {
+      await roomLifecycle.start((roomName) => terminateRoom(server, roomName));
+    },
+    async onDestroy() {
+      await roomLifecycle.destroy();
+    },
     async onAuthenticate({ documentName, requestHeaders, requestParameters, token }) {
+      if (await roomLifecycle.isDeleted(documentName)) {
+        throw new Error("Invalid Document ticket");
+      }
       const room = parseDocumentRoomName(documentName);
       if (
         room.organizationId !== requestParameters.get("org_id") ||
@@ -50,6 +68,9 @@ export function createCollaborationServer(
       return loadDocumentState(storage, context);
     },
     async onStoreDocument({ document, lastContext }) {
+      if (await roomLifecycle.isDeleted(document.name)) {
+        return;
+      }
       await storeDocumentState(storage, lastContext, document);
     },
     async onRequest({ request, response }) {
@@ -60,8 +81,32 @@ export function createCollaborationServer(
         );
         return Promise.reject();
       }
+      const room = privateRoomFromRequest(request.method, request.url);
+      if (room !== undefined) {
+        if (!hasServiceAuthentication(
+          request.headers.authorization,
+          config.collaborationServiceSecret ?? defaultCollaborationServiceSecret,
+        )) {
+          response.writeHead(401);
+          response.end();
+          return Promise.reject();
+        }
+        const roomName = documentRoomName(room);
+        await roomLifecycle.delete(roomName);
+        response.writeHead(204);
+        response.end();
+        return Promise.reject();
+      }
     },
   });
+  return server;
+}
+
+function terminateRoom(server: Server<DocumentTicketClaims>, roomName: string): void {
+  server.hocuspocus.documents.get(roomName)?.broadcastStateless(
+    JSON.stringify({ type: "document.deleted" }),
+  );
+  server.hocuspocus.closeConnections(roomName);
 }
 
 interface DocumentStateStorage {
@@ -120,4 +165,26 @@ function documentScope(claims: DocumentTicketClaims): DocumentScope {
     organizationId: claims.organizationId,
     teamId: claims.teamId,
   };
+}
+
+function privateRoomFromRequest(method: string | undefined, requestURL: string | undefined) {
+  if (method !== "DELETE" || requestURL === undefined) {
+    return;
+  }
+  const match = new URL(requestURL, "http://collaboration.internal").pathname.match(
+    /^\/internal\/v1\/orgs\/([^/]+)\/teams\/([^/]+)\/documents\/([^/]+)\/room$/,
+  );
+  if (match === null) {
+    return;
+  }
+  return { organizationId: match[1]!, teamId: match[2]!, documentId: match[3]! };
+}
+
+function hasServiceAuthentication(header: string | undefined, secret: string): boolean {
+  if (header === undefined) {
+    return false;
+  }
+  const supplied = Buffer.from(header);
+  const expected = Buffer.from(`Bearer ${secret}`);
+  return supplied.byteLength === expected.byteLength && timingSafeEqual(supplied, expected);
 }

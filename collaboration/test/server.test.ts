@@ -7,6 +7,8 @@ import { test, type TestContext } from "node:test";
 import { HocuspocusProvider } from "@hocuspocus/provider";
 import WebSocket from "ws";
 
+import { defaultCollaborationServiceSecret } from "../src/config.js";
+import { InMemoryRoomLifecycle } from "../src/room-lifecycle.js";
 import { createCollaborationServer, documentRoomName } from "../src/server.js";
 
 const ticketSecret = "test-document-ticket-secret-value-123";
@@ -79,6 +81,76 @@ test("a valid Document ticket joins only its intended Document Room", async (t) 
   assert.equal(rejection, "permission-denied");
 });
 
+test("deleting a Document closes its room on every replica and rejects new Editing Sessions", async (t) => {
+  const roomLifecycle = new InMemoryRoomLifecycle();
+  const receivingServer = createCollaborationServer({
+    allowedOrigins: [trustedOrigin],
+    port: 0,
+    roomLifecycle,
+    ticketSecret,
+  });
+  const deletingServer = createCollaborationServer({
+    allowedOrigins: [trustedOrigin],
+    port: 0,
+    roomLifecycle,
+    ticketSecret,
+  });
+  await Promise.all([receivingServer.listen(), deletingServer.listen()]);
+  t.after(() => Promise.all([receivingServer.destroy(), deletingServer.destroy()]));
+  let resolveDeleted!: (payload: string) => void;
+  const deleted = new Promise<string>((resolve) => {
+    resolveDeleted = resolve;
+  });
+  const provider = editingSession(
+    t,
+    receivingServer.address.port,
+    roomName,
+    validDocumentTicket(),
+    {},
+    undefined,
+    undefined,
+    ({ payload }) => {
+      resolveDeleted(payload);
+      provider.destroy();
+    },
+  );
+  await waitFor(() => receivingServer.hocuspocus.getConnectionsCount() === 1);
+
+  const response = await fetch(
+    `http://127.0.0.1:${deletingServer.address.port}/internal/v1/orgs/${organizationId}` +
+      `/teams/${teamId}/documents/${documentId}/room`,
+    {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${defaultCollaborationServiceSecret}` },
+    },
+  );
+
+  assert.equal(response.status, 204);
+  assert.deepEqual(JSON.parse(await deleted), { type: "document.deleted" });
+  await waitFor(() => receivingServer.hocuspocus.getConnectionsCount() === 0);
+  await waitFor(() => receivingServer.hocuspocus.getDocumentsCount() === 0);
+  assert.equal(
+    await rejectEditingSession(t, receivingServer.address.port, roomName, validDocumentTicket()),
+    "permission-denied",
+  );
+});
+
+test("closing a Document Room requires service authentication", async (t) => {
+  const server = createCollaborationServer({
+    port: 0,
+  });
+  await server.listen();
+  t.after(() => server.destroy());
+
+  const response = await fetch(
+    `http://127.0.0.1:${server.address.port}/internal/v1/orgs/${organizationId}` +
+      `/teams/${teamId}/documents/${documentId}/room`,
+    { method: "DELETE" },
+  );
+
+  assert.equal(response.status, 401);
+});
+
 test("altered and expired Document tickets are rejected", async (t) => {
   const server = createCollaborationServer({
     allowedOrigins: [trustedOrigin],
@@ -137,7 +209,7 @@ test("the collaboration process shuts down cleanly on SIGTERM", async (t) => {
   const port = await availablePort();
   const child = spawn(process.execPath, ["dist/src/main.js"], {
     cwd: process.cwd(),
-    env: { ...process.env, COLLABORATION_PORT: String(port) },
+    env: { ...process.env, COLLABORATION_PORT: String(port), NODE_ENV: "test" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   t.after(() => child.kill("SIGKILL"));
@@ -305,6 +377,7 @@ function editingSession(
   options: ConnectionOptions,
   authenticated?: (event: AuthenticationEvent) => void,
   rejected?: (event: AuthenticationEvent & { reason: string }) => void,
+  stateless?: (event: { payload: string }) => void,
 ): HocuspocusProvider {
   const org = options.organizationId ?? organizationId;
   const team = options.teamId ?? teamId;
@@ -318,6 +391,7 @@ function editingSession(
     onAuthenticated: () => authenticated?.({ provider, timeout }),
     onAuthenticationFailed: ({ reason }: { reason: string }) =>
       rejected?.({ provider, reason, timeout }),
+    ...(stateless === undefined ? {} : { onStateless: stateless }),
   };
   const provider = new HocuspocusProvider(configuration);
   timeout = setTimeout(() => provider.destroy(), 2_000);
@@ -325,6 +399,16 @@ function editingSession(
     provider.destroy();
   });
   return provider;
+}
+
+async function waitFor(condition: () => boolean): Promise<void> {
+  const deadline = Date.now() + 3_000;
+  while (!condition()) {
+    if (Date.now() >= deadline) {
+      throw new Error("collaboration state did not settle");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
 }
 
 type WebSocketConstructor = new (
