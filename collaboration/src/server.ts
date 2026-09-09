@@ -18,6 +18,8 @@ import {
 } from "./room-lifecycle.js";
 import { CoreAPIStorage, type DocumentScope, type StoredDocumentState } from "./storage.js";
 
+const presenceColors = ["#2563eb", "#7c3aed", "#c026d3", "#db2777", "#ea580c", "#0d9488"] as const;
+
 export function createCollaborationServer(
   config: Partial<CollaborationConfig> & { roomLifecycle?: RoomLifecycle } = {},
 ): Server<DocumentTicketClaims> {
@@ -64,6 +66,15 @@ export function createCollaborationServer(
         config.ticketSecret ?? defaultTicketSecret,
       );
     },
+    async beforeHandleAwareness({ context, socketId, states }) {
+      if (context === undefined) {
+        return;
+      }
+      const user = authenticatedPresence(context, socketId);
+      for (const state of states.values()) {
+        state.user = user;
+      }
+    },
     async onLoadDocument({ context }) {
       return loadDocumentState(storage, context);
     },
@@ -100,6 +111,23 @@ export function createCollaborationServer(
     },
   });
   return server;
+}
+
+function authenticatedPresence(claims: DocumentTicketClaims, sessionId: string) {
+  return {
+    color: presenceColor(claims.userId),
+    id: claims.userId,
+    name: claims.displayName,
+    sessionId,
+  };
+}
+
+function presenceColor(userId: string): string {
+  let hash = 0;
+  for (const character of userId) {
+    hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+  }
+  return presenceColors[hash % presenceColors.length]!;
 }
 
 function terminateRoom(server: Server<DocumentTicketClaims>, roomName: string): void {
