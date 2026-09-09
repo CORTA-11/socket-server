@@ -107,6 +107,18 @@ make collaboration-test
 make collaboration-container-check
 ```
 
+Run the bounded 25-Editor, 5 MiB Document, and 500-room operating-envelope
+exercise with:
+
+```bash
+make collaboration-capacity
+```
+
+The command emits a JSON resource and behavior report. The target values are
+not admission limits or latency guarantees. See
+[`docs/collaboration-capacity.md`](docs/collaboration-capacity.md) for the
+method, configuration, baseline result, and follow-up guidance.
+
 Build and run with Docker:
 
 ```bash
