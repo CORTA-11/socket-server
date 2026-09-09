@@ -31,7 +31,8 @@ export COLLABORATION_PERSISTENCE_DEBOUNCE_MS
 export COLLABORATION_PERSISTENCE_MAX_DEBOUNCE_MS
 
 .PHONY: check fmt-check mod-check vet run build test test-race image \
-	collaboration-run collaboration-build collaboration-test collaboration-container-check
+	collaboration-run collaboration-build collaboration-test collaboration-capacity \
+	collaboration-container-check
 
 check: fmt-check mod-check vet build
 
@@ -73,6 +74,9 @@ collaboration-build:
 
 collaboration-test:
 	npm --prefix collaboration test
+
+collaboration-capacity:
+	npm --prefix collaboration run capacity
 
 collaboration-container-check:
 	docker build -t collaboration-server:local collaboration

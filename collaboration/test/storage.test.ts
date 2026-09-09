@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { test, type TestContext } from "node:test";
+import { Doc, encodeStateAsUpdate } from "yjs";
 
 import { CoreAPIStorage, type DocumentScope } from "../src/storage.js";
 
@@ -36,6 +37,29 @@ test("core-api storage loads canonical Yjs bytes with service and Editor identit
   assert.equal(requests[0]?.url, documentStatePath());
   assert.equal(requests[0]?.authorization, `Bearer ${serviceSecret}`);
   assert.equal(requests[0]?.editorId, scope.editorId);
+});
+
+test("core-api storage loads a 5 MiB encoded Yjs Document without overflowing validation", async (t) => {
+  const document = new Doc();
+  document.getMap("capacity").set("payload", new Uint8Array(5 * 1024 * 1024));
+  const canonicalState = encodeStateAsUpdate(document);
+  const baseURL = await mockCoreAPI(t, [], (_request, response) => {
+    json(response, 200, {
+      body_html: "<p>Capacity Document</p>",
+      canonical_state: Buffer.from(canonicalState).toString("base64"),
+      title: "Capacity exercise",
+    });
+  });
+  const storage = new CoreAPIStorage({
+    baseURL,
+    maxDocumentBytes: 6 * 1024 * 1024,
+    maxResponseBytes: 8 * 1024 * 1024,
+    serviceSecret,
+  });
+
+  const loaded = await storage.load(scope);
+
+  assert.equal(loaded.canonicalState.byteLength, canonicalState.byteLength);
 });
 
 test("core-api storage atomically stores state and materialized projections", async (t) => {

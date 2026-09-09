@@ -7,6 +7,7 @@ import { test, type TestContext } from "node:test";
 import { HocuspocusProvider } from "@hocuspocus/provider";
 import WebSocket from "ws";
 
+import { runCapacityExercise } from "../scripts/capacity-exercise.js";
 import { defaultCollaborationServiceSecret } from "../src/config.js";
 import { InMemoryRoomLifecycle } from "../src/room-lifecycle.js";
 import {
@@ -24,6 +25,29 @@ const teamId = "22222222-2222-4222-8222-222222222222";
 const documentId = "33333333-3333-4333-8333-333333333333";
 const trustedOrigin = "https://app.example";
 const roomName = documentRoomName({ documentId, organizationId, teamId });
+
+test("the bounded capacity exercise reports collaboration behavior through public seams", async () => {
+  const report = await runCapacityExercise({
+    activeRooms: 10,
+    documentBytes: 64 * 1024,
+    editorsPerDocument: 3,
+    timeoutMs: 20_000,
+  });
+
+  assert.equal(report.status, "passed");
+  assert.equal(report.targets.editorsPerDocument, 3);
+  assert.equal(report.collaborativeChanges.convergedEditors, 3);
+  assert.equal(report.collaborativeChanges.metrics.activeEditingSessions, 3);
+  assert.equal(report.collaborativeChanges.metrics.activeRooms, 1);
+  assert.ok(report.largeDocument.loadedBytes >= 64 * 1024);
+  assert.ok(report.largeDocument.persistedBytes >= 64 * 1024);
+  assert.ok(report.largeDocument.reloadedBytes >= 64 * 1024);
+  assert.equal(report.largeDocument.changePersisted, true);
+  assert.equal(report.roomObservability.metrics.activeEditingSessions, 10);
+  assert.equal(report.roomObservability.metrics.activeRooms, 10);
+  assert.ok(report.resources.peakRssBytes >= report.resources.startRssBytes);
+  assert.deepEqual(report.failures, []);
+});
 
 test("collaboration health is observable independently", async (t) => {
   const server = createCollaborationServer({ port: 0 });
@@ -458,24 +482,39 @@ test("the collaboration process shuts down cleanly on SIGTERM", async (t) => {
   const port = await availablePort();
   const child = spawn(process.execPath, ["dist/src/main.js"], {
     cwd: process.cwd(),
-    env: { ...process.env, COLLABORATION_PORT: String(port), NODE_ENV: "test" },
+    env: { ...nonEmptyEnvironment(), COLLABORATION_PORT: String(port), NODE_ENV: "test" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   t.after(() => child.kill("SIGKILL"));
-
-  await new Promise<void>((resolve, reject) => {
-    child.once("error", reject);
-    child.stdout.once("data", () => resolve());
-  });
-  child.kill("SIGTERM");
-
-  const exit = await new Promise<{ code: number | null; signal: string | null }>(
+  const stderr: Buffer[] = [];
+  child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+  const exited = new Promise<{ code: number | null; signal: string | null }>(
     (resolve) => {
       child.once("exit", (code, signal) => resolve({ code, signal }));
     },
   );
+
+  await Promise.race([
+    new Promise<void>((resolve, reject) => {
+      child.once("error", reject);
+      child.stdout.once("data", () => resolve());
+    }),
+    exited.then((exit) => Promise.reject(new Error(
+      `collaboration process exited before listening (${JSON.stringify(exit)}): ` +
+        Buffer.concat(stderr).toString("utf8"),
+    ))),
+  ]);
+  child.kill("SIGTERM");
+
+  const exit = await exited;
   assert.deepEqual(exit, { code: 0, signal: null });
 });
+
+function nonEmptyEnvironment(): NodeJS.ProcessEnv {
+  return Object.fromEntries(
+    Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== ""),
+  );
+}
 
 async function availablePort(): Promise<number> {
   const server = createServer();

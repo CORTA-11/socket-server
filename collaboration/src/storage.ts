@@ -156,7 +156,7 @@ function decodeCanonicalBase64(value: string, maxBytes: number): Uint8Array {
   if (value.length > Math.ceil(maxBytes / 3) * 4) {
     throw new Error("Document resource limit exceeded");
   }
-  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) {
+  if (!hasBase64Shape(value)) {
     throw new Error("core-api returned an invalid Document state response");
   }
   const decoded = Buffer.from(value, "base64");
@@ -167,6 +167,28 @@ function decodeCanonicalBase64(value: string, maxBytes: number): Uint8Array {
     throw new Error("core-api returned an invalid Document state response");
   }
   return new Uint8Array(decoded);
+}
+
+function hasBase64Shape(value: string): boolean {
+  if (value.length % 4 !== 0) {
+    return false;
+  }
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  const contentLength = value.length - padding;
+  for (let index = 0; index < contentLength; index += 1) {
+    const code = value.charCodeAt(index);
+    const isAlphabet = (code >= 65 && code <= 90) || (code >= 97 && code <= 122) ||
+      (code >= 48 && code <= 57) || code === 43 || code === 47;
+    if (!isAlphabet) {
+      return false;
+    }
+  }
+  for (let index = contentLength; index < value.length; index += 1) {
+    if (value[index] !== "=") {
+      return false;
+    }
+  }
+  return true;
 }
 
 function validateProjectionSize(title: string, bodyHTML: string, maxBytes: number): void {

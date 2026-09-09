@@ -8,6 +8,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "capacity": "npm run build && node dist/scripts/capacity-exercise.js",
     "start": "node dist/src/main.js",
     "test": "npm run build && node --test dist/test/*.test.js",
     "smoke": "node scripts/smoke.mjs"
