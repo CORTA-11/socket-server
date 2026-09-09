@@ -79,6 +79,23 @@ test("core-api storage rejects semantically invalid Yjs state", async (t) => {
   await assert.rejects(storage.load(scope), /^Error: invalid encoded Yjs Document state$/);
 });
 
+test("core-api storage stops reading oversized Document responses", async (t) => {
+  const baseURL = await mockCoreAPI(t, [], (_request, response) => {
+    json(response, 200, {
+      body_html: "x".repeat(128),
+      canonical_state: "",
+      title: "Notes",
+    });
+  });
+  const storage = new CoreAPIStorage({
+    baseURL,
+    maxResponseBytes: 64,
+    serviceSecret,
+  });
+
+  await assert.rejects(storage.load(scope), /response exceeded the resource limit/);
+});
+
 test("core-api storage surfaces failed stores without exposing response content", async (t) => {
   const baseURL = await mockCoreAPI(t, [], async (request, response) => {
     await readJSON(request);
@@ -91,6 +108,34 @@ test("core-api storage surfaces failed stores without exposing response content"
     storage.store(scope, Uint8Array.from([0, 0]), { title: "Notes", bodyHTML: "<p>Body</p>" }),
     /^Error: core-api Document state request failed with status 404$/,
   );
+});
+
+test("core-api readiness is exposed without response content", async (t) => {
+  const readyURL = await mockCoreAPI(t, [], (_request, response) => {
+    response.writeHead(204);
+    response.end();
+  });
+  const unavailableURL = await mockCoreAPI(t, [], (_request, response) => {
+    response.writeHead(503, { "Content-Type": "text/plain" });
+    response.end("database-password-must-not-leak");
+  });
+
+  assert.equal(await new CoreAPIStorage({ baseURL: readyURL, serviceSecret }).health(), true);
+  assert.equal(await new CoreAPIStorage({ baseURL: unavailableURL, serviceSecret }).health(), false);
+});
+
+test("core-api persistence requests stop at the configured dependency timeout", async (t) => {
+  const stalledURL = await mockCoreAPI(t, [], () => undefined);
+  const storage = new CoreAPIStorage({
+    baseURL: stalledURL,
+    requestTimeout: 20,
+    serviceSecret,
+  });
+  const startedAt = Date.now();
+
+  assert.equal(await storage.health(), false);
+  await assert.rejects(storage.load(scope), /timed out|aborted/i);
+  assert.ok(Date.now() - startedAt < 500);
 });
 
 interface RecordedRequest {
@@ -120,7 +165,10 @@ async function mockCoreAPI(
     server.once("error", reject);
     server.listen(0, "127.0.0.1", resolve);
   });
-  t.after(() => new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())));
+  t.after(() => {
+    server.closeAllConnections();
+    return new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  });
   const address = server.address();
   if (address === null || typeof address === "string") {
     throw new Error("mock core-api did not bind a TCP port");

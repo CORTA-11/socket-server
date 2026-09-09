@@ -132,6 +132,42 @@ test("Hocuspocus persistence callbacks surface load and store failures", async (
   await assert.rejects(storeDocumentState(storage, claims, new Doc()), storeFailure);
 });
 
+test("persistence callbacks reject canonical state beyond the configured Document bound", async () => {
+  let stores = 0;
+  const claims = ticketClaims(defaultScope);
+  const storage = {
+    load: async () => ({
+      bodyHTML: "",
+      canonicalState: Uint8Array.from([0, 0]),
+      title: "",
+    }),
+    store: async (): Promise<void> => {
+      stores += 1;
+    },
+  };
+
+  await assert.rejects(
+    loadDocumentState(storage, claims, 1),
+    /Document resource limit exceeded/,
+  );
+  await assert.rejects(
+    storeDocumentState(storage, claims, new Doc(), 1),
+    /Document resource limit exceeded/,
+  );
+  await assert.rejects(
+    loadDocumentState({
+      ...storage,
+      load: async () => ({
+        bodyHTML: `<p>${"x".repeat(1_000)}</p>`,
+        canonicalState: new Uint8Array(),
+        title: "Large projection",
+      }),
+    }, claims, 32),
+    /Document resource limit exceeded/,
+  );
+  assert.equal(stores, 0);
+});
+
 function collaborativeContent() {
   const document = TiptapTransformer.toYdoc(tiptapDocument("Research notes"), "title", [StarterKit]);
   const body = TiptapTransformer.toYdoc({

@@ -3,6 +3,7 @@ set -euo pipefail
 
 network_name="collaboration-container-check-$$"
 redis_id=""
+core_api_id=""
 container_id=""
 
 cleanup() {
@@ -11,6 +12,9 @@ cleanup() {
   fi
   if [[ -n "$redis_id" ]]; then
     docker rm --force "$redis_id" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$core_api_id" ]]; then
+    docker rm --force "$core_api_id" >/dev/null 2>&1 || true
   fi
   docker network rm "$network_name" >/dev/null 2>&1 || true
 }
@@ -21,8 +25,15 @@ redis_id="$(docker run --detach \
   --network "$network_name" \
   --network-alias redis \
   redis:8.8.1)"
+core_api_id="$(docker run --detach \
+  --network "$network_name" \
+  --network-alias core-api \
+  --entrypoint node \
+  collaboration-server:local \
+  -e 'require("node:http").createServer((request,response)=>{response.writeHead(request.url==="/health/ready"?204:404);response.end()}).listen(8080,"0.0.0.0")')"
 container_id="$(docker run --detach \
   --env COLLABORATION_PORT=18082 \
+  --env CORE_API_INTERNAL_URL=http://core-api:8080 \
   --env REDIS_URL=redis://redis:6379/0 \
   --network "$network_name" \
   collaboration-server:local)"

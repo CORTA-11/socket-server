@@ -14,6 +14,9 @@ export interface DocumentProjections {
 
 export interface CoreAPIStorageConfig {
   baseURL: string;
+  maxDocumentBytes?: number;
+  maxResponseBytes?: number;
+  requestTimeout?: number;
   serviceSecret: string;
 }
 
@@ -31,6 +34,9 @@ export interface StoredDocumentState {
 
 export class CoreAPIStorage {
   private readonly baseURL: string;
+  private readonly maxDocumentBytes: number;
+  private readonly maxResponseBytes: number;
+  private readonly requestTimeout: number;
   private readonly serviceSecret: string;
 
   constructor(config: CoreAPIStorageConfig) {
@@ -44,16 +50,32 @@ export class CoreAPIStorage {
       throw new Error("COLLABORATION_SERVICE_SECRET must contain at least 32 bytes");
     }
     this.baseURL = baseURL.toString().replace(/\/$/, "");
+    this.maxDocumentBytes = config.maxDocumentBytes ?? 6 * 1024 * 1024;
+    this.maxResponseBytes = config.maxResponseBytes ?? 16 * 1024 * 1024;
+    this.requestTimeout = config.requestTimeout ?? 2_000;
     this.serviceSecret = config.serviceSecret;
+  }
+
+  async health(): Promise<boolean> {
+    try {
+      const response = await fetch(`${this.baseURL}/health/ready`, {
+        signal: AbortSignal.timeout(this.requestTimeout),
+      });
+      await response.body?.cancel();
+      return response.ok;
+    } catch {
+      return false;
+    }
   }
 
   async load(scope: DocumentScope): Promise<StoredDocumentState> {
     const response = await this.request(scope, "GET");
-    const payload: unknown = await response.json();
+    const payload = await readBoundedJSON(response, this.maxResponseBytes);
     if (!isDocumentStateResponse(payload)) {
       throw new Error("core-api returned an invalid Document state response");
     }
-    const canonicalState = decodeCanonicalBase64(payload.canonical_state);
+    validateProjectionSize(payload.title, payload.body_html, this.maxDocumentBytes);
+    const canonicalState = decodeCanonicalBase64(payload.canonical_state, this.maxDocumentBytes);
     validateYjsState(canonicalState);
     return {
       bodyHTML: payload.body_html,
@@ -68,6 +90,10 @@ export class CoreAPIStorage {
     projections: DocumentProjections,
   ): Promise<void> {
     validateYjsState(state);
+    if (state.byteLength > this.maxDocumentBytes) {
+      throw new Error("Document resource limit exceeded");
+    }
+    validateProjectionSize(projections.title, projections.bodyHTML, this.maxDocumentBytes);
     const response = await this.request(scope, "PUT", {
       body: JSON.stringify({
         body_html: projections.bodyHTML,
@@ -95,6 +121,7 @@ export class CoreAPIStorage {
         "X-Synodus-Editor-ID": scope.editorId,
       },
       method,
+      signal: AbortSignal.timeout(this.requestTimeout),
     });
     if (!response.ok) {
       await response.body?.cancel();
@@ -122,16 +149,53 @@ function isDocumentStateResponse(value: unknown): value is DocumentStateResponse
     typeof (value as Record<string, unknown>).title === "string";
 }
 
-function decodeCanonicalBase64(value: string): Uint8Array {
+function decodeCanonicalBase64(value: string, maxBytes: number): Uint8Array {
   if (value === "") {
     return new Uint8Array();
+  }
+  if (value.length > Math.ceil(maxBytes / 3) * 4) {
+    throw new Error("Document resource limit exceeded");
   }
   if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) {
     throw new Error("core-api returned an invalid Document state response");
   }
   const decoded = Buffer.from(value, "base64");
+  if (decoded.byteLength > maxBytes) {
+    throw new Error("Document resource limit exceeded");
+  }
   if (decoded.toString("base64") !== value) {
     throw new Error("core-api returned an invalid Document state response");
   }
   return new Uint8Array(decoded);
+}
+
+function validateProjectionSize(title: string, bodyHTML: string, maxBytes: number): void {
+  if (Buffer.byteLength(title) > maxBytes || Buffer.byteLength(bodyHTML) > maxBytes) {
+    throw new Error("Document resource limit exceeded");
+  }
+}
+
+async function readBoundedJSON(response: Response, maxBytes: number): Promise<unknown> {
+  const contentLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    await response.body?.cancel();
+    throw new Error("core-api Document state response exceeded the resource limit");
+  }
+  if (response.body === null) {
+    throw new Error("core-api returned an invalid Document state response");
+  }
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  for await (const chunk of response.body) {
+    bytes += chunk.byteLength;
+    if (bytes > maxBytes) {
+      throw new Error("core-api Document state response exceeded the resource limit");
+    }
+    chunks.push(chunk);
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks, bytes).toString("utf8")) as unknown;
+  } catch {
+    throw new Error("core-api returned an invalid Document state response");
+  }
 }
