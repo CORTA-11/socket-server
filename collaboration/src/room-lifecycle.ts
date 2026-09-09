@@ -7,6 +7,7 @@ const deletionKeyPrefix = "corta:collaboration:deleted:";
 export interface RoomLifecycle {
   delete(roomName: string): Promise<void>;
   destroy(): Promise<void>;
+  health(): Promise<boolean>;
   isDeleted(roomName: string): Promise<boolean>;
   start(onDeleted: (roomName: string) => void): Promise<void>;
 }
@@ -14,10 +15,12 @@ export interface RoomLifecycle {
 export class RedisRoomLifecycle implements RoomLifecycle {
   private readonly client: Redis;
   private readonly subscriber: Redis;
+  private healthCheck: Promise<boolean> | undefined;
 
-  constructor(redisURL: string) {
-    this.client = new Redis(redisURL, { lazyConnect: true });
-    this.subscriber = new Redis(redisURL, { lazyConnect: true });
+  constructor(redisURL: string, commandTimeout = 2_000) {
+    const options = { commandTimeout, enableOfflineQueue: false, lazyConnect: true };
+    this.client = new Redis(redisURL, options);
+    this.subscriber = new Redis(redisURL, options);
   }
 
   async start(onDeleted: (roomName: string) => void): Promise<void> {
@@ -36,12 +39,30 @@ export class RedisRoomLifecycle implements RoomLifecycle {
     }
   }
 
+  async health(): Promise<boolean> {
+    if (this.healthCheck === undefined) {
+      this.healthCheck = this.checkHealth().finally(() => {
+        this.healthCheck = undefined;
+      });
+    }
+    return this.healthCheck;
+  }
+
   async isDeleted(roomName: string): Promise<boolean> {
     return await this.client.exists(deletionKey(roomName)) === 1;
   }
 
   async destroy(): Promise<void> {
     await Promise.allSettled([this.subscriber.quit(), this.client.quit()]);
+  }
+
+  private async checkHealth(): Promise<boolean> {
+    try {
+      await Promise.all([this.client.ping(), this.subscriber.ping()]);
+      return true;
+    } catch {
+      return false;
+    }
   }
 }
 
@@ -64,6 +85,10 @@ export class InMemoryRoomLifecycle implements RoomLifecycle {
     timer.unref();
     this.timers.add(timer);
     this.listeners.forEach((listener) => listener(roomName));
+  }
+
+  async health(): Promise<boolean> {
+    return true;
   }
 
   async isDeleted(roomName: string): Promise<boolean> {

@@ -62,8 +62,8 @@ make test
 The independently runnable Node 22+ Hocuspocus process owns live Document
 Rooms. It does not replace the Go chat process and does not receive tenant
 database credentials. It validates core-api's short-lived, Document-scoped
-tickets locally before an Editing Session joins a room. The durable state
-adapter lands in the next collaboration slice.
+tickets locally before an Editing Session joins a room. It loads and stores
+canonical Yjs state through core-api without receiving database credentials.
 
 ```bash
 cd collaboration
@@ -78,6 +78,9 @@ It listens on `COLLABORATION_HOST` (`0.0.0.0`) and
 ```bash
 curl http://localhost:8082/health
 # {"ok":true,"service":"collaboration-server"}
+
+curl http://localhost:8082/metrics
+# Prometheus room, Editing Session, authentication, persistence, reconnect and health metrics
 ```
 
 After the core-api and infra Compose projects are running, verify the public
@@ -131,6 +134,25 @@ on different `PORT`s; all receive the same Redis events.
 | `COLLABORATION_PORT` | `8082` | Hocuspocus listen port |
 | `CORE_API_INTERNAL_URL` | `http://127.0.0.1:8080` | Base URL used to load and store canonical Document state |
 | `COLLABORATION_SERVICE_SECRET` | (dev default) | Shared private credential; must match core-api and be replaced outside development |
+| `COLLABORATION_AUTHENTICATION_TIMEOUT_MS` | `60000` | Absolute pre-authentication and idle timeout |
+| `COLLABORATION_DEPENDENCY_TIMEOUT_MS` | `2000` | core-api readiness and persistence request timeout |
+| `COLLABORATION_MAX_WEBSOCKET_MESSAGE_BYTES` | `6291456` | Maximum inbound WebSocket message, allowing the 5 MiB state target plus protocol overhead |
+| `COLLABORATION_MAX_DOCUMENT_BYTES` | `6291456` | Maximum encoded canonical Yjs Document state |
+| `COLLABORATION_MAX_BACKPRESSURE_BYTES` | `8388608` | Maximum bytes queued to one slow Editing Session |
+| `COLLABORATION_MAX_AUTHENTICATED_QUEUE_BYTES` | `12582912` | Maximum parsed inbound bytes queued per authenticated Editing Session |
+| `COLLABORATION_MAX_AUTHENTICATED_QUEUE_MESSAGES` | `64` | Maximum parsed inbound messages queued per authenticated Editing Session |
+| `COLLABORATION_MAX_UNAUTHENTICATED_QUEUE_BYTES` | `262144` | Maximum pre-authentication bytes buffered per Editing Session |
+| `COLLABORATION_MAX_UNAUTHENTICATED_QUEUE_MESSAGES` | `64` | Maximum pre-authentication messages buffered per Editing Session |
+| `COLLABORATION_MAX_PENDING_DOCUMENTS` | `1` | Pending Document names allowed per Editing Session |
+| `COLLABORATION_MAX_PERSISTENCE_RESPONSE_BYTES` | `16777216` | Maximum core-api Document-state response read into memory |
+| `COLLABORATION_PERSISTENCE_DEBOUNCE_MS` | `2000` | Normal persistence batching window |
+| `COLLABORATION_PERSISTENCE_MAX_DEBOUNCE_MS` | `10000` | Maximum time changes wait for a persistence attempt |
+
+`/health` returns `503` when Redis room lifecycle or core-api readiness is
+unavailable. `/metrics` uses Prometheus text format and intentionally has no
+Document, Editor, ticket, email, or URL labels. Oversized frames close with
+WebSocket code `1009`; an Editing Session exceeding the outbound backpressure
+bound closes with `1013` without blocking other Document Rooms.
 
 ## Example: client WebSocket URL
 

@@ -11,6 +11,13 @@ import {
 } from "./config.js";
 import { materializeDocument } from "./projections.js";
 import { initializeDocument } from "./initial-state.js";
+import { CollaborationObservability, type HealthDependency } from "./observability.js";
+import {
+  enforceDocumentLimit,
+  enforceSyncLimit,
+  protectInboundQueue,
+  protectSlowEditingSession,
+} from "./resource-limits.js";
 import {
   InMemoryRoomLifecycle,
   RedisRoomLifecycle,
@@ -23,48 +30,84 @@ const presenceColors = ["#2563eb", "#7c3aed", "#c026d3", "#db2777", "#ea580c", "
 export function createCollaborationServer(
   config: Partial<CollaborationConfig> & { roomLifecycle?: RoomLifecycle } = {},
 ): Server<DocumentTicketClaims> {
+  const dependencyTimeout = config.dependencyTimeout ?? 2_000;
   const roomLifecycle = config.roomLifecycle ?? (config.redisURL === undefined
     ? new InMemoryRoomLifecycle()
-    : new RedisRoomLifecycle(config.redisURL));
+    : new RedisRoomLifecycle(config.redisURL, dependencyTimeout));
+  const maxDocumentBytes = config.maxDocumentBytes ?? 6 * 1024 * 1024;
   const storage = config.coreAPIURL === undefined && config.collaborationServiceSecret === undefined
     ? undefined
     : new CoreAPIStorage({
         baseURL: config.coreAPIURL ?? "http://127.0.0.1:8080",
+        maxDocumentBytes,
+        maxResponseBytes: config.maxPersistenceResponseBytes ?? 16 * 1024 * 1024,
+        requestTimeout: dependencyTimeout,
         serviceSecret: config.collaborationServiceSecret ?? defaultCollaborationServiceSecret,
       });
+  const observability = new CollaborationObservability();
+  const healthDependencies: HealthDependency[] = [
+    { health: () => roomLifecycle.health(), name: "room_lifecycle" },
+    ...(storage === undefined ? [] : [{ health: () => storage.health(), name: "core_api" }]),
+  ];
+  const refreshHealth = async () => {
+    const failed = await failedDependencies(healthDependencies, dependencyTimeout);
+    observability.healthResult(failed.length === 0);
+    return failed;
+  };
+  const maxBackpressureBytes = config.maxBackpressureBytes ?? 8 * 1024 * 1024;
   const server = new Server<DocumentTicketClaims>({
     address: config.address ?? "127.0.0.1",
     name: "collaboration-server",
     port: config.port ?? 8082,
     timeout: config.authenticationTimeout ?? 60_000,
+    debounce: config.persistenceDebounce ?? 2_000,
+    maxDebounce: config.persistenceMaxDebounce ?? 10_000,
+    maxPendingDocuments: config.maxPendingDocuments ?? 1,
+    maxUnauthenticatedQueueMessages: config.maxUnauthenticatedQueueMessages ?? 64,
+    maxUnauthenticatedQueueSize: config.maxUnauthenticatedQueueBytes ?? 256 * 1024,
+    websocketOptions: {
+      maxBufferedChunks: 64,
+      maxFragments: 64,
+      maxPayload: config.maxWebSocketMessageBytes ?? 6 * 1024 * 1024,
+      perMessageDeflate: false,
+    },
     quiet: true,
     stopOnSignals: false,
     async onListen() {
-      await roomLifecycle.start((roomName) => terminateRoom(server, roomName));
+      try {
+        await roomLifecycle.start((roomName) => terminateRoom(server, roomName));
+      } catch {
+        throw new Error("Document Room lifecycle failed to start");
+      }
     },
     async onDestroy() {
       await roomLifecycle.destroy();
     },
     async onAuthenticate({ documentName, requestHeaders, requestParameters, token }) {
-      if (await roomLifecycle.isDeleted(documentName)) {
+      try {
+        if (await roomLifecycle.isDeleted(documentName)) {
+          throw new Error("Invalid Document ticket");
+        }
+        const room = parseDocumentRoomName(documentName);
+        if (
+          room.organizationId !== requestParameters.get("org_id") ||
+          room.teamId !== requestParameters.get("team_id")
+        ) {
+          throw new Error("Invalid Document ticket");
+        }
+        validateOrigin(
+          requestHeaders.get("origin"),
+          config.allowedOrigins ?? defaultAllowedOrigins,
+        );
+        return validateDocumentTicket(
+          token,
+          room,
+          config.ticketSecret ?? defaultTicketSecret,
+        );
+      } catch {
+        observability.increment("authenticationFailures");
         throw new Error("Invalid Document ticket");
       }
-      const room = parseDocumentRoomName(documentName);
-      if (
-        room.organizationId !== requestParameters.get("org_id") ||
-        room.teamId !== requestParameters.get("team_id")
-      ) {
-        throw new Error("Invalid Document ticket");
-      }
-      validateOrigin(
-        requestHeaders.get("origin"),
-        config.allowedOrigins ?? defaultAllowedOrigins,
-      );
-      return validateDocumentTicket(
-        token,
-        room,
-        config.ticketSecret ?? defaultTicketSecret,
-      );
     },
     async beforeHandleAwareness({ context, socketId, states }) {
       if (context === undefined) {
@@ -75,21 +118,59 @@ export function createCollaborationServer(
         state.user = user;
       }
     },
+    async beforeSync({ document, payload, type }) {
+      enforceSyncLimit(document, payload, type, maxDocumentBytes);
+    },
+    async connected({ connection: editingSession, context }) {
+      observability.authenticated(context);
+      protectInboundQueue(
+        editingSession,
+        config.maxAuthenticatedQueueBytes ?? 12 * 1024 * 1024,
+        config.maxAuthenticatedQueueMessages ?? 64,
+      );
+      protectSlowEditingSession(editingSession.webSocket, maxBackpressureBytes, () => {
+        observability.increment("slowEditingSessions");
+      });
+    },
     async onLoadDocument({ context }) {
-      return loadDocumentState(storage, context);
+      try {
+        return await loadDocumentState(storage, context, maxDocumentBytes);
+      } catch {
+        observability.increment("loadFailures");
+        throw new Error("Document state load failed");
+      }
     },
     async onStoreDocument({ document, lastContext }) {
-      if (await roomLifecycle.isDeleted(document.name)) {
-        return;
+      try {
+        if (await roomLifecycle.isDeleted(document.name)) {
+          return;
+        }
+        await storeDocumentState(storage, lastContext, document, maxDocumentBytes);
+      } catch {
+        observability.increment("storeFailures");
+        throw new Error("Document state persistence failed");
       }
-      await storeDocumentState(storage, lastContext, document);
     },
-    async onRequest({ request, response }) {
+    async onDisconnect({ context }) {
+      observability.disconnected(context);
+    },
+    async onRequest({ instance, request, response }) {
       if (request.method === "GET" && request.url === "/health") {
-        response.writeHead(200, { "Content-Type": "application/json" });
-        response.end(
-          JSON.stringify({ ok: true, service: "collaboration-server" }),
-        );
+        const failed = await refreshHealth();
+        response.writeHead(failed.length === 0 ? 200 : 503, { "Content-Type": "application/json" });
+        response.end(JSON.stringify(failed.length === 0
+          ? { ok: true, service: "collaboration-server" }
+          : {
+              dependencies: Object.fromEntries(failed.map((name) => [name, "unavailable"])),
+              ok: false,
+              service: "collaboration-server",
+            }));
+        return Promise.reject();
+      }
+      if (request.method === "GET" && request.url === "/metrics") {
+        await refreshHealth();
+        response.writeHead(200, { "Content-Type": "text/plain; version=0.0.4; charset=utf-8" });
+        response.end(observability.render(instance));
         return Promise.reject();
       }
       const room = privateRoomFromRequest(request.method, request.url);
@@ -103,7 +184,13 @@ export function createCollaborationServer(
           return Promise.reject();
         }
         const roomName = documentRoomName(room);
-        await roomLifecycle.delete(roomName);
+        try {
+          await roomLifecycle.delete(roomName);
+        } catch {
+          response.writeHead(503, { "Content-Type": "application/json" });
+          response.end(JSON.stringify({ error: "Document Room lifecycle unavailable" }));
+          return Promise.reject();
+        }
         response.writeHead(204);
         response.end();
         return Promise.reject();
@@ -111,6 +198,35 @@ export function createCollaborationServer(
     },
   });
   return server;
+}
+
+async function failedDependencies(
+  dependencies: HealthDependency[],
+  timeoutMs: number,
+): Promise<string[]> {
+  const statuses = await Promise.all(dependencies.map(async (dependency) => {
+    try {
+      return { healthy: await within(timeoutMs, dependency.health()), name: dependency.name };
+    } catch {
+      return { healthy: false, name: dependency.name };
+    }
+  }));
+  return statuses.filter(({ healthy }) => !healthy).map(({ name }) => name);
+}
+
+async function within<T>(timeoutMs: number, operation: Promise<T>): Promise<T> {
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error("dependency timed out")), timeoutMs);
+        timeout.unref();
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function authenticatedPresence(claims: DocumentTicketClaims, sessionId: string) {
@@ -149,27 +265,35 @@ interface DocumentStateStorage {
 export async function loadDocumentState(
   storage: DocumentStateStorage | undefined,
   claims: DocumentTicketClaims,
+  maxDocumentBytes = Number.MAX_SAFE_INTEGER,
 ): Promise<Doc | Uint8Array | undefined> {
   if (storage === undefined) {
     return;
   }
   const state = await storage.load(documentScope(claims));
-  return state.canonicalState.byteLength === 0
-    ? initializeDocument(state.title, state.bodyHTML)
-    : state.canonicalState;
+  enforceDocumentLimit(state.canonicalState, maxDocumentBytes);
+  if (state.canonicalState.byteLength > 0) {
+    return state.canonicalState;
+  }
+  const initialized = initializeDocument(state.title, state.bodyHTML);
+  enforceDocumentLimit(initialized, maxDocumentBytes);
+  return initialized;
 }
 
 export async function storeDocumentState(
   storage: DocumentStateStorage | undefined,
   claims: DocumentTicketClaims,
   document: Doc,
+  maxDocumentBytes = Number.MAX_SAFE_INTEGER,
 ): Promise<void> {
   if (storage === undefined) {
     return;
   }
+  const state = encodeStateAsUpdate(document);
+  enforceDocumentLimit(state, maxDocumentBytes);
   await storage.store(
     documentScope(claims),
-    encodeStateAsUpdate(document),
+    state,
     materializeDocument(document),
   );
 }
