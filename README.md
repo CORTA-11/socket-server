@@ -90,14 +90,23 @@ Envoy WebSocket route and its expected pre-ticket denial:
 npm run smoke -- ws://localhost:10000/ws/docs
 ```
 
-Clients use the Document's public UUID as the Hocuspocus document name and a
-ticket from
+Clients use `<org_id>:<team_id>:<document_id>` as the Hocuspocus Document name
+and a ticket from
 `POST /api/v1/orgs/{org_id}/teams/{team_id}/documents/{document_id}/socket-ticket`.
 The WebSocket URL carries the same public scope as
 `/ws/docs?org_id={org_id}&team_id={team_id}`.
 The collaboration process rejects tickets with an invalid signature, expired
 validity, malformed or mismatched user/organization/team scope, a different
 Document ID, or an Origin outside `SOCKET_ALLOWED_ORIGINS`.
+
+After authentication it loads and stores the latest canonical state through
+core-api's private
+`GET|PUT /internal/v1/orgs/{org_id}/teams/{team_id}/documents/{document_id}/state`
+contract. `CORE_API_INTERNAL_URL` must resolve only on the private service
+network. `COLLABORATION_SERVICE_SECRET` is sent as a bearer credential and must
+match core-api; the Editor ID from the validated ticket is sent separately so
+core-api can recheck team membership and Document permissions. Never expose
+these private routes or the shared service secret to the browser.
 
 Build verification is available from the repository root:
 
@@ -165,6 +174,20 @@ unavailable. `/metrics` uses Prometheus text format and intentionally has no
 Document, Editor, ticket, email, or URL labels. Oversized frames close with
 WebSocket code `1009`; an Editing Session exceeding the outbound backpressure
 bound closes with `1013` without blocking other Document Rooms.
+
+## First-release operating scope
+
+Run one `collaboration-server` replica. Document Room ownership and awareness
+are process-local; Redis currently coordinates deletion only, not Yjs updates
+between replicas. Redis-backed horizontal scaling and failover are deferred.
+
+The release deliberately uses standard Hocuspocus/Yjs synchronization and
+persistence callbacks. It does not add custom durable acknowledgements,
+immediate revocation of an already-connected Editor, granular per-Document
+roles, richer editor nodes, or product-level version history and restore.
+Tickets are short-lived, and core-api rechecks authorization on state load and
+store. Document content belongs in ordinary tenant Postgres backups; Redis and
+the collaboration process hold no authoritative backup copy.
 
 ## Example: client WebSocket URL
 
