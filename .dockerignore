@@ -1,6 +1,9 @@
-.cache/
 .git/
-.gitignore
+.github/
+.cache/
+.env*
+bin/
+collaboration/
 Dockerfile
 README.md
-socket-server
+checks.txt
