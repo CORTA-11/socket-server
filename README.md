@@ -69,5 +69,3 @@ make collaboration-capacity
 Run one document collaboration replica: room ownership and Yjs updates are
 process-local. Redis coordinates document deletion, not room synchronization.
 Canonical document state belongs in tenant PostgreSQL backups.
-See [capacity guidance](docs/collaboration-capacity.md) for the operating
-exercise and [architecture decisions](docs/adr/) for design details.
